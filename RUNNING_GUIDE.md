@@ -8,7 +8,8 @@ Two ways to run: **Native (fast local dev)** or **Docker (one-command full stack
 
 - Use only on networks and systems you **own or are explicitly authorized to monitor**.
 - Live traffic capture is **opt-in** (not on by default).
-- No payload storage, no credential capture, no auto-blocking.
+- Raw EVE records are stored for analyst review. They may contain payload or other sensitive fields depending on Suricata configuration; ingest only data you are authorized to retain.
+- No automatic blocking or other active response.
 - ML anomaly scores are **heuristic only** — they never replace Suricata rule-based alerts.
 
 ---
@@ -45,6 +46,8 @@ FIRST_ADMIN_USERNAME=analyst                     # Your analyst login
 FIRST_ADMIN_PASSWORD=DemoAnalyst123!             # Set a strong password
 JWT_SECRET=change-me-to-a-long-random-string     # Important for production
 ```
+
+The bcrypt-backed password limit is 72 UTF-8 bytes.
 
 ### Step 2 — Install Backend Dependencies
 
@@ -119,8 +122,10 @@ Open **http://localhost:3000** in your browser and sign in with:
 
 ### Step 7 — Load Sample Data
 
-The backend auto-ingests the 16 sample EVE events on first startup
-(`data/sample_eve.json`). If the dashboard is empty:
+The backend auto-ingests the bundled sample EVE events at startup when
+`AUTO_REPLAY_SAMPLE_ON_STARTUP=1` (`data/sample_eve.json`).
+
+When replayed, sample timestamps are shifted to the current time, preserving the events' relative order and gaps. Existing sample rows are refreshed in place so repeated replay keeps them recent without adding duplicate rows. If the dashboard is empty:
 
 1. Click **"Replay sample"** in the top-right of Dashboard or Alerts page, OR
 2. Call the API directly:
@@ -247,7 +252,7 @@ docker compose run --rm backend pytest tests -q
 Test coverage:
 - Event parsing + normalization (alert/flow/dns/http/tls)
 - Malformed/blank/duplicate line handling
-- SHA-1 dedup key determinism
+- SHA-256 dedup key determinism
 - API filtering, severity/type/src/dst/time range/sort/pagination/search
 - Acknowledge + immutable notes + author attribution
 - Dashboard summary aggregates
@@ -332,7 +337,7 @@ Intrusion-Detection-System/
 | Symptom | Fix |
 |---|---|
 | Backend exits on startup, `alembic upgrade head` fails | Wait for MySQL healthy (compose uses `depends_on: condition: service_healthy`). If still flaky: `docker compose restart backend`. |
-| Dashboard empty but `/health` says ok | Ensure `AUTO_REPLAY_SAMPLE_ON_STARTUP=1`. Click **"Replay sample"** button or call `POST /api/admin/replay-sample`. |
+| Dashboard empty but `/health` says ok | Ensure `AUTO_REPLAY_SAMPLE_ON_STARTUP=1`. Click **"Replay sample"** to load recent demo events or call `POST /api/admin/replay-sample`. |
 | Events appear missed | Tailer stores offset in `ingestion_checkpoints`. Delete that row or wipe DB: `docker compose down -v` / delete `nids_local.db`. |
 | `sensor` container didn't start | Intentional. Start with `docker compose --profile sensor up -d`. |
 | Anomaly scores are null | Requires all three: `ANOMALY_ENABLED=true`, `event_type = flow`, AND ≥50 flow events for training baseline. |

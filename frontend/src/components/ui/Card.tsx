@@ -68,28 +68,16 @@ export function Grid({ cols = 1, children, gap = spacing["5"] }: {
   } else {
     colCss = {
       display: "grid",
-      gridTemplateColumns: `repeat(${cols.default}, minmax(0, 1fr))`,
       gap,
-    };
+      "--grid-cols-default": cols.default,
+      "--grid-cols-md": cols.md ?? cols.default,
+      "--grid-cols-lg": cols.lg ?? cols.md ?? cols.default,
+      "--grid-cols-xl": cols.xl ?? cols.lg ?? cols.md ?? cols.default,
+    } as React.CSSProperties;
   }
   return (
-    <div>
-      {typeof cols === "object" && (
-        <style>{`
-          @media (min-width: 768px) {
-            #grid-${cols.default}-${Math.random().toString(36).slice(2,6)} { grid-template-columns: repeat(${cols.md || cols.default}, minmax(0, 1fr)); }
-          }
-          @media (min-width: 1024px) {
-            #grid-${cols.default}-${Math.random().toString(36).slice(2,6)} { grid-template-columns: repeat(${cols.lg || cols.md || cols.default}, minmax(0, 1fr)); }
-          }
-          @media (min-width: 1440px) {
-            #grid-${cols.default}-${Math.random().toString(36).slice(2,6)} { grid-template-columns: repeat(${cols.xl || cols.lg || cols.md || cols.default}, minmax(0, 1fr)); }
-          }
-        `}</style>
-      )}
-      <div style={colCss} id={typeof cols === "object" ? `grid-${cols.default}-${Math.random().toString(36).slice(2,6)}` : undefined}>
-        {children}
-      </div>
+    <div className={typeof cols === "object" ? "responsive-grid" : undefined} style={colCss}>
+      {children}
     </div>
   );
 }

@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 720
 
+    @field_validator("FIRST_ADMIN_PASSWORD")
+    @classmethod
+    def _bcrypt_password_limit(cls, value: SecretStr) -> SecretStr:
+        if len(value.get_secret_value().encode("utf-8")) > 72:
+            raise ValueError("FIRST_ADMIN_PASSWORD must be at most 72 UTF-8 bytes")
+        return value
+
     # ----- CORS -----------------------------------------------------------------
     CORS_ORIGINS: str = "http://localhost:3000"
 
@@ -64,7 +71,6 @@ class Settings(BaseSettings):
 
     # ----- Anomaly --------------------------------------------------------------
     ANOMALY_ENABLED: bool = False
-    ANOMALY_SAMPLE_FOR_INITIAL_FIT: int = 500
 
     # ----- Allowlists / asset labels --------------------------------------------
     ALLOWLIST_CIDRS: str = "127.0.0.1/32,10.0.0.0/8"

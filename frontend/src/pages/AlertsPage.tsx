@@ -35,7 +35,12 @@ export function AlertsPage() {
 
   const replayMut = useMutation({
     mutationFn: () => replaySample(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["events", "dashboard"] }),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["events"] }),
+        qc.invalidateQueries({ queryKey: ["dashboard"] }),
+      ]);
+    },
   });
 
   const hasAnyFilter = useMemo(() => {

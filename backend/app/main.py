@@ -79,7 +79,12 @@ def _start_background_jobs() -> None:
             if os.path.exists(sample_path):
                 scorer = _get_anomaly_scorer()
                 with SessionLocal() as db:
-                    stats = ingest_file(db, sample_path, anomaly_scorer=scorer)
+                    stats = ingest_file(
+                        db,
+                        sample_path,
+                        anomaly_scorer=scorer,
+                        rebase_timestamps_to_now=True,
+                    )
                     log.info("sample_replay_startup", **stats)
         except Exception as e:
             log.warn("sample_replay_failed", err=repr(e))
@@ -142,7 +147,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list or ["*"],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -151,12 +156,11 @@ app.add_middleware(
 
 @app.get("/health", response_model=HealthOut, tags=["meta"])
 def health(db: Session = Depends(get_db)) -> HealthOut:
-    db_status = "ok"
     try:
         db.execute(text("SELECT 1"))
     except Exception:
-        db_status = "error"
-    return HealthOut(status="ok", db=db_status)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="database_unavailable")
+    return HealthOut(status="ok", db="ok")
 
 
 app.include_router(auth_router.router)
@@ -177,7 +181,7 @@ def replay_sample(db: Session = Depends(get_db), _user: User = Depends(get_curre
         else:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="sample_file_missing")
     scorer = _get_anomaly_scorer()
-    stats = ingest_file(db, sample_path, anomaly_scorer=scorer)
+    stats = ingest_file(db, sample_path, anomaly_scorer=scorer, rebase_timestamps_to_now=True)
     return ReplayResult(path=sample_path, **stats)
 
 

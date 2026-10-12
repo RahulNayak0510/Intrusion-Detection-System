@@ -49,7 +49,7 @@ export function FilterPanel({ filters, onChange, onReplay }: FilterPanelProps) {
 
   const onPresetChange = (v: string) => {
     setPreset(v as any);
-    setPartial(parsePreset(v));
+    onChange({ ...filters, since: undefined, until: undefined, page: 1, ...parsePreset(v) });
   };
 
   return (
@@ -87,10 +87,11 @@ export function FilterPanel({ filters, onChange, onReplay }: FilterPanelProps) {
       </button>
 
       {open && (
-        <div style={{ padding: spacing["5"], display: "grid", gap: spacing["4"], gridTemplateColumns: "repeat(12, minmax(0, 1fr))" }}>
+        <div className="filter-grid" style={{ padding: spacing["5"], gridTemplateColumns: "repeat(12, minmax(0, 1fr))" }}>
           <Field span={4} label="Time range">
             <Select value={preset} onChange={(e) => onPresetChange(e.target.value)}>
               {PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+              {preset === "custom" && <option value="custom">Custom</option>}
             </Select>
           </Field>
           <Field span={4} label="Since (ISO UTC, optional)">
@@ -134,7 +135,7 @@ export function FilterPanel({ filters, onChange, onReplay }: FilterPanelProps) {
               value={filters.acknowledged === true ? "yes" : filters.acknowledged === false ? "no" : "any"}
               onChange={(e) => {
                 const v = e.target.value;
-                setPartial({ acknowledged: v === "any" ? "" : (v === "yes") } as any);
+                setPartial({ acknowledged: v === "any" ? undefined : (v === "yes") });
               }}
             >
               <option value="any">Any</option>
@@ -171,7 +172,7 @@ export function FilterPanel({ filters, onChange, onReplay }: FilterPanelProps) {
 
 function Field({ span, label, children }: { span: number; label: string; children: React.ReactNode }) {
   return (
-    <div style={{ gridColumn: `span ${span} / span ${span}` }}>
+    <div className="filter-field" style={{ gridColumn: `span ${span} / span ${span}` }}>
       <Label>{label}</Label>
       {children}
     </div>

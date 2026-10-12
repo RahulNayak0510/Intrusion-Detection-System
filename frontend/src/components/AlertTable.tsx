@@ -5,7 +5,8 @@ import { borders, colors, radius, spacing, typography, severityBgColor, severity
 import type { EventSummary } from "../types";
 import { Button } from "./ui/Button";
 import { Badge, severityToTone } from "./ui/Badge";
-import { formatDistanceToNow, formatISO } from "date-fns";
+import { formatDistanceToNow } from "date-fns";
+import { formatUtcTimestamp, parseApiUtcDate } from "../lib/dateTime";
 
 export interface ColumnDef<T> {
   key: string;
@@ -51,10 +52,10 @@ export function AlertTable({
       render: (r) => (
         <div>
           <div style={{ fontVariantNumeric: "tabular-nums", fontSize: typography.fontSize.sm, color: colors.textPrimary }}>
-            {formatDistanceToNow(new Date(r.timestamp), { addSuffix: true })}
+            {formatDistanceToNow(parseApiUtcDate(r.timestamp), { addSuffix: true })}
           </div>
           <div style={{ fontSize: typography.fontSize.xs, color: colors.textMuted, fontVariantNumeric: "tabular-nums" }}>
-            {formatISO(new Date(r.timestamp), { representation: "complete" }).replace("T", " ").slice(0, 19)} UTC
+            {formatUtcTimestamp(r.timestamp)} UTC
           </div>
         </div>
       ),

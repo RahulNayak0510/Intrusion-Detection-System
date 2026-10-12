@@ -16,7 +16,8 @@ import { Select } from "../components/ui/Input";
 import { EmptyState, ErrorState, LoadingSkeleton, NoEventsEmpty } from "../components/States";
 import type { DashboardSummary, EventSummary } from "../types";
 import { borders, colors, radius, spacing, typography } from "../tokens";
-import { format, formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow } from "date-fns";
+import { formatUtcShort, parseApiUtcDate } from "../lib/dateTime";
 
 export function DashboardPage() {
   const [hours, setHours] = useState<number>(24);
@@ -24,7 +25,12 @@ export function DashboardPage() {
   const q = useQuery({ queryKey: ["dashboard", hours], queryFn: () => fetchDashboard(hours), placeholderData: keepPreviousData });
   const replayMut = useMutation({
     mutationFn: () => replaySample(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["dashboard", "events"] }),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["dashboard"] }),
+        qc.invalidateQueries({ queryKey: ["events"] }),
+      ]);
+    },
   });
 
   const data: DashboardSummary | undefined = q.data;
@@ -98,7 +104,7 @@ export function DashboardPage() {
         <>
           {data && <MetricsStrip data={data}/>}
 
-          <div style={{ display: "grid", gap: spacing["5"], marginTop: spacing["5"], gridTemplateColumns: "minmax(0, 3fr) minmax(260px, 1fr)" }}>
+          <div className="dashboard-primary-grid">
             <Card title="Alert counts over time" icon={<Clock size={15}/>} subtitle={`Bucketed counts for the last ${hours}h`}>
               <AlertCountsChart data={data.alert_counts_over_time}/>
             </Card>
@@ -126,7 +132,7 @@ export function DashboardPage() {
             </Card>
           </div>
 
-          <div style={{ display: "grid", gap: spacing["5"], marginTop: spacing["5"], gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+          <div className="dashboard-secondary-grid">
             <Card title="Top source IPs (by alert count)" icon={<Network size={15}/>} subtitle="Likely sources of suspicious activity in the selected window">
               <TopIPBars rows={data.top_source_ips} palette="#f59e0b"/>
             </Card>
@@ -146,12 +152,6 @@ export function DashboardPage() {
             </Card>
           </div>
 
-          <style>{`
-            @media (max-width: 1023px) {
-              #root main > div > div[style*="gridTemplateColumns: \"minmax(0, 3fr) minmax(260px, 1fr)\""] { grid-template-columns: 1fr !important; }
-              #root main > div > div[style*="gridTemplateColumns: repeat(2"] { grid-template-columns: 1fr !important; }
-            }
-          `}</style>
         </>
       )}
     </div>
@@ -192,7 +192,7 @@ const CHART_HEIGHT = 280;
 function AlertCountsChart({ data }: { data: DashboardSummary["alert_counts_over_time"] }) {
   const rows = (data || []).map(p => ({
     ...p,
-    bucketLabel: format(new Date(p.bucket), "MM-dd HH:mm"),
+    bucketLabel: formatUtcShort(p.bucket),
     total: p.count,
   }));
   if (rows.length === 0) {
@@ -356,7 +356,7 @@ function RecentEventsList({ rows }: { rows: EventSummary[] }) {
                   <Badge tone={severityToTone(r.severity)}>{(r.severity || "—").toUpperCase()}</Badge>
                 </td>
                 <td style={{ padding: `${spacing["2.5"]} ${spacing["3"]}`, borderBottom: idx < rows.length - 1 ? borders.base : "none", fontSize: typography.fontSize.sm, color: colors.textPrimary, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
-                  {formatDistanceToNow(new Date(r.timestamp), { addSuffix: true })}
+                  {formatDistanceToNow(parseApiUtcDate(r.timestamp), { addSuffix: true })}
                 </td>
                 <td style={{ padding: `${spacing["2.5"]} ${spacing["3"]}`, borderBottom: idx < rows.length - 1 ? borders.base : "none" }}>
                   <span style={{

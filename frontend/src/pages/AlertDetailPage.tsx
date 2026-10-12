@@ -10,7 +10,8 @@ import { Label, TextArea } from "../components/ui/Input";
 import { EmptyState, ErrorState, LoadingSkeleton } from "../components/States";
 import type { EventDetail as EventDetailT } from "../types";
 import { borders, colors, radius, spacing, typography } from "../tokens";
-import { format, formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow } from "date-fns";
+import { parseApiUtcDate, formatUtcTimestamp } from "../lib/dateTime";
 
 export function AlertDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -74,10 +75,7 @@ export function AlertDetailPage() {
     <div>
       <BackLink/>
 
-      <div style={{
-        display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: spacing["4"],
-        marginTop: spacing["4"], marginBottom: spacing["5"], alignItems: "flex-start",
-      }}>
+      <div className="event-detail-header">
         <div style={{ display: "flex", gap: spacing["3"], alignItems: "flex-start" }}>
           <div style={{
             width: 40, height: 40, borderRadius: radius.md,
@@ -105,8 +103,8 @@ export function AlertDetailPage() {
               )}
             </div>
             <div style={{ fontSize: typography.fontSize.sm, color: colors.textSecondary }}>
-              {formatDistanceToNow(new Date(ev.timestamp), { addSuffix: true })} ·{" "}
-              {format(new Date(ev.timestamp), "yyyy-MM-dd HH:mm:ss")} UTC
+              {formatDistanceToNow(parseApiUtcDate(ev.timestamp), { addSuffix: true })} ·{" "}
+              {formatUtcTimestamp(ev.timestamp)} UTC
               {ev.signature_category && <> · {ev.signature_category}</>}
             </div>
           </div>
@@ -123,7 +121,7 @@ export function AlertDetailPage() {
         </div>
       </div>
 
-      <div style={{ display: "grid", gap: spacing["5"], gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)" }}>
+      <div className="event-detail-grid">
         <div style={{ display: "flex", flexDirection: "column", gap: spacing["5"], minWidth: 0 }}>
           <Card title="Event details" icon={<Info size={15}/>}>
             <Grid2>
@@ -158,7 +156,7 @@ export function AlertDetailPage() {
               icon={<Gauge size={15}/>}
               subtitle="Secondary signal only. Never proof of an intrusion. Use alongside rule-based alerts."
             >
-              <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0, 1fr)", gap: spacing["5"], alignItems: "center" }}>
+              <div className="anomaly-score-layout">
                 <div>
                   <Stat label="Heuristic score" tone={ev.anomaly_score > 0.7 ? "high" : ev.anomaly_score > 0.4 ? "medium" : "default"}
                     value={`${(ev.anomaly_score * 100).toFixed(0)}%`}
@@ -205,7 +203,7 @@ export function AlertDetailPage() {
                         {n.author_username || `user #${n.author_id}`}
                       </span>
                       <span style={{ fontSize: typography.fontSize.xs, color: colors.textMuted, fontVariantNumeric: "tabular-nums" }}>
-                        {formatDistanceToNow(new Date(n.created_at), { addSuffix: true })} · {format(new Date(n.created_at), "yyyy-MM-dd HH:mm:ss")} UTC
+                        {formatDistanceToNow(parseApiUtcDate(n.created_at), { addSuffix: true })} · {formatUtcTimestamp(n.created_at)} UTC
                       </span>
                     </div>
                   </div>
@@ -233,7 +231,7 @@ export function AlertDetailPage() {
             </Grid2>
           </Card>
 
-          <Card title="Raw event (JSON)" icon={<FileJson size={15}/>} subtitle="Source EVE fields (no payloads stored)">
+          <Card title="Raw event (JSON)" icon={<FileJson size={15}/>} subtitle="Full source EVE fields, stored as received">
             <pre style={{
               margin: 0, padding: spacing["3"], background: colors.bgRoot, border: borders.base,
               borderRadius: radius.md, maxHeight: 540, overflow: "auto",
@@ -246,13 +244,6 @@ export function AlertDetailPage() {
         </div>
       </div>
 
-      <style>{`
-        @media (max-width: 1023px) {
-          #root main > div > div[style*="gridTemplateColumns: \"minmax(0, 2fr) minmax(0, 1fr)\""] {
-            grid-template-columns: 1fr !important;
-          }
-        }
-      `}</style>
     </div>
   );
 }

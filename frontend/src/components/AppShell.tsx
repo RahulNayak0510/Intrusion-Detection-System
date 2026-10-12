@@ -13,8 +13,8 @@ export function AppShell() {
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", minHeight: "100vh", background: colors.bgRoot, color: colors.textPrimary }}>
-      <aside style={{
+    <div className="app-shell" style={{ minHeight: "100vh", background: colors.bgRoot, color: colors.textPrimary }}>
+      <aside className="app-sidebar" style={{
         borderRight: borders.base, background: colors.bgSurface, padding: spacing["5"],
         display: "flex", flexDirection: "column", gap: spacing["5"],
       }}>
@@ -43,7 +43,7 @@ export function AppShell() {
           </StyledLink>
         </nav>
 
-        <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: spacing["2"] }}>
+        <div className="app-sidebar-footer" style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: spacing["2"] }}>
           <div style={{
             padding: spacing["3"], borderRadius: radius.md, border: borders.base,
             background: colors.bgSurfaceElevated,
@@ -101,12 +101,6 @@ export function AppShell() {
         </div>
       </main>
 
-      <style>{`
-        @media (max-width: 1023px) {
-          html body #root div[style*="grid-template-columns: 220px"] { grid-template-columns: 0 1fr !important; }
-          html body #root div[style*="grid-template-columns: 220px"] > aside:first-of-type { display: none !important; }
-        }
-      `}</style>
     </div>
   );
 }

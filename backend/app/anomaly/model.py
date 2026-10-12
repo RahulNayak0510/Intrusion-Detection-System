@@ -16,8 +16,8 @@ log = get_logger(module="anomaly_model")
 class AnomalyModel:
     """Isolation Forest wrapper. Disabled until ANOMALY_ENABLED=true.
 
-    - Trains from recent flow events in DB on first use (bootstraps on synthetic
-      baselines until enough real data exists).
+    - Starts from a deterministic synthetic baseline. Callers may pass real
+      flow vectors to fit(), but this wrapper does not load data from the DB.
     - Scores flow events only; all other event types return (None, None).
     - Feature contribution heuristic: z-score vs training mean/std.
       LABELLED CLEARLY AS HEURISTIC, NOT A ROOT-CAUSE EXPLANATION.

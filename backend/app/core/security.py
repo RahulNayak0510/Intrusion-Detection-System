@@ -10,7 +10,9 @@ from app.core.config import settings
 
 
 def hash_password(password: str) -> str:
-    password_bytes = password.encode("utf-8")[:72]
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > 72:
+        raise ValueError("password must be at most 72 UTF-8 bytes")
     salt = bcrypt.gensalt()
     hashed = bcrypt.hashpw(password_bytes, salt)
     return hashed.decode("utf-8")
@@ -18,7 +20,9 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain: str, hashed: str) -> bool:
     try:
-        plain_bytes = plain.encode("utf-8")[:72]
+        plain_bytes = plain.encode("utf-8")
+        if len(plain_bytes) > 72:
+            return False
         hashed_bytes = hashed.encode("utf-8")
         return bcrypt.checkpw(plain_bytes, hashed_bytes)
     except Exception:

@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy import and_, desc, asc, func, or_, select
+from sqlalchemy import and_, case, desc, asc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -155,7 +155,12 @@ def _row_to_detail(row: Event) -> EventDetail:
     return d
 
 
-_SEVERITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+def _utc_naive(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def list_events(
@@ -175,6 +180,8 @@ def list_events(
 ) -> Paginated[EventSummary]:
     page = max(1, int(page))
     page_size = max(1, min(500, int(page_size)))
+    since = _utc_naive(since)
+    until = _utc_naive(until)
 
     stmt = select(Event)
     conds = []
@@ -212,12 +219,24 @@ def list_events(
 
     sort = (sort or "timestamp_desc").lower()
     order_col: Any = desc(Event.timestamp)
+    severity_desc_rank = case(
+        (Event.severity == "HIGH", 0),
+        (Event.severity == "MEDIUM", 1),
+        (Event.severity == "LOW", 2),
+        else_=99,
+    )
+    severity_asc_rank = case(
+        (Event.severity == "LOW", 0),
+        (Event.severity == "MEDIUM", 1),
+        (Event.severity == "HIGH", 2),
+        else_=99,
+    )
     if sort == "timestamp_asc":
         order_col = asc(Event.timestamp)
     elif sort == "severity_desc":
-        order_col = asc(func.coalesce(func.field(Event.severity, "HIGH", "MEDIUM", "LOW"), 99)), desc(Event.timestamp)
+        order_col = asc(severity_desc_rank), desc(Event.timestamp)
     elif sort == "severity_asc":
-        order_col = desc(func.coalesce(func.field(Event.severity, "HIGH", "MEDIUM", "LOW"), 99)), asc(Event.timestamp)
+        order_col = asc(severity_asc_rank), asc(Event.timestamp)
     elif sort == "src_ip":
         order_col = asc(Event.src_ip), desc(Event.timestamp)
     elif sort == "dst_ip":
@@ -280,38 +299,49 @@ def _bucket_start(ts: datetime, bucket_minutes: int = 60) -> datetime:
 def dashboard_summary(db: Session, hours: int = 24, bucket_minutes: int = 60, top_n: int = 10) -> DashboardSummary:
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     window_start = now - timedelta(hours=hours)
+    last_24h_start = now - timedelta(hours=24)
 
     # Severity counts in window
     sev_stmt = (
         select(Event.severity, func.count())
-        .where(Event.event_type == "alert", Event.timestamp >= window_start)
+        .where(Event.event_type == "alert", Event.timestamp >= window_start, Event.timestamp <= now)
         .group_by(Event.severity)
     )
     sev_counts: list[SeverityCount] = []
     last_24h = {"total_alerts": 0, "high": 0, "medium": 0, "low": 0, "acknowledged": 0, "flows_scored": 0}
     for sev, cnt in db.execute(sev_stmt).all():
         sev_counts.append(SeverityCount(severity=(sev or "UNKNOWN"), count=cnt))
+
+    # Metric cards are explicitly 24-hour totals, independent of the chart range.
+    last_sev_stmt = (
+        select(Event.severity, func.count())
+        .where(Event.event_type == "alert", Event.timestamp >= last_24h_start, Event.timestamp <= now)
+        .group_by(Event.severity)
+    )
+    for sev, cnt in db.execute(last_sev_stmt).all():
         last_24h["total_alerts"] += cnt
         key = (sev or "").lower()
-        if key in last_24h:
-            last_24h[key] = cnt
+        if key in {"high", "medium", "low"}:
+            last_24h[key] += cnt
 
     # Acknowledged ratio in window
     ack_stmt = select(func.count()).where(
-        Event.event_type == "alert", Event.timestamp >= window_start, Event.acknowledged.is_(True)
+        Event.event_type == "alert", Event.timestamp >= last_24h_start, Event.timestamp <= now,
+        Event.acknowledged.is_(True)
     )
     last_24h["acknowledged"] = db.scalar(ack_stmt) or 0
 
     # Flows scored
     flow_stmt = select(func.count()).where(
-        Event.event_type == "flow", Event.timestamp >= window_start, Event.anomaly_score.is_not(None)
+        Event.event_type == "flow", Event.timestamp >= last_24h_start, Event.timestamp <= now,
+        Event.anomaly_score.is_not(None)
     )
     last_24h["flows_scored"] = db.scalar(flow_stmt) or 0
 
     # Event type counts in window
     et_stmt = (
         select(Event.event_type, func.count())
-        .where(Event.timestamp >= window_start)
+        .where(Event.timestamp >= window_start, Event.timestamp <= now)
         .group_by(Event.event_type)
         .order_by(desc(func.count()))
     )
@@ -320,7 +350,10 @@ def dashboard_summary(db: Session, hours: int = 24, bucket_minutes: int = 60, to
     # Top source / destination IPs (alerts only, in window)
     src_stmt = (
         select(Event.src_ip, func.count())
-        .where(Event.event_type == "alert", Event.timestamp >= window_start, Event.src_ip.is_not(None))
+        .where(
+            Event.event_type == "alert", Event.timestamp >= window_start, Event.timestamp <= now,
+            Event.src_ip.is_not(None),
+        )
         .group_by(Event.src_ip)
         .order_by(desc(func.count()))
         .limit(top_n)
@@ -329,7 +362,10 @@ def dashboard_summary(db: Session, hours: int = 24, bucket_minutes: int = 60, to
 
     dst_stmt = (
         select(Event.dst_ip, func.count())
-        .where(Event.event_type == "alert", Event.timestamp >= window_start, Event.dst_ip.is_not(None))
+        .where(
+            Event.event_type == "alert", Event.timestamp >= window_start, Event.timestamp <= now,
+            Event.dst_ip.is_not(None),
+        )
         .group_by(Event.dst_ip)
         .order_by(desc(func.count()))
         .limit(top_n)

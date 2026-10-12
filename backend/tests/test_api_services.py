@@ -42,7 +42,7 @@ def _make(ts: str, etype="alert", src="10.0.0.1", dst="10.0.0.2", sport=1000, dp
 
 
 def _seed_events(db: Session):
-    base = dt.datetime(2026, 10, 9, 12, 0, 0)
+    base = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
     events = [
         _make((base - dt.timedelta(minutes=5)).isoformat() + "+00:00", "alert",
               "198.51.100.2", "10.0.1.5", 1111, 22, "ET SSH Scan", 2),

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import time
-from datetime import datetime, timezone
-from typing import Callable, Iterable, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Callable, Optional
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.logging_setup import get_logger
-from app.ingestion.parser import ParsedEvent, parse_eve_line, normalize_event
+from app.ingestion.parser import ParsedEvent, _parse_iso_utc, normalize_event, parse_eve_line
 from app.models import Event, IngestionCheckpoint
 
 log = get_logger(module="eve_reader")
@@ -25,12 +26,19 @@ def _get_inode(path: str) -> Optional[int]:
         st = os.stat(path)
     except (FileNotFoundError, PermissionError, OSError):
         return None
-    # On Windows, st_ino may be 0; fall back to a hash of size+mtime as a pseudo inode
+    # On Windows, st_ino may be 0. Use stable file creation metadata instead of
+    # size/mtime, which changes on every append. Python's built-in hash is
+    # process-randomized and cannot be persisted in the checkpoint.
     ino = st.st_ino
     if ino == 0:
-        # Windows FAT / some volumes: use composite key
-        composite = f"{st.st_size}-{int(st.st_mtime_ns or st.st_mtime * 1e9)}"
-        return hash(composite) & 0x7FFFFFFFFFFFFFFF
+        created_ns = getattr(
+            st,
+            "st_birthtime_ns",
+            int(getattr(st, "st_birthtime", st.st_ctime) * 1e9),
+        )
+        identity = f"{os.path.abspath(path)}:{st.st_dev}:{created_ns}"
+        digest = hashlib.blake2b(identity.encode("utf-8"), digest_size=8).digest()
+        return int.from_bytes(digest, "big") & 0x7FFFFFFFFFFFFFFF
     return int(ino)
 
 
@@ -52,7 +60,13 @@ def _save_checkpoint(db: Session, path: str, offset: int, inode: Optional[int]) 
     db.commit()
 
 
-def _insert_event(db: Session, p: ParsedEvent, anomaly_score: float | None, anomaly_features: dict | None) -> bool:
+def _insert_event(
+    db: Session,
+    p: ParsedEvent,
+    anomaly_score: float | None,
+    anomaly_features: dict | None,
+    refresh_existing: bool = False,
+) -> bool:
     ev = Event(
         dedup_key=p.dedup_key,
         event_type=p.event_type,
@@ -79,10 +93,52 @@ def _insert_event(db: Session, p: ParsedEvent, anomaly_score: float | None, anom
         return True
     except IntegrityError:
         db.rollback()
+        if refresh_existing:
+            existing = db.scalar(select(Event).where(Event.dedup_key == p.dedup_key))
+            if existing is not None:
+                existing.timestamp = p.timestamp
+                existing.raw = p.raw
+                existing.ingestion_time = datetime.now(timezone.utc).replace(tzinfo=None)
+                if anomaly_score is not None:
+                    existing.anomaly_score = anomaly_score
+                    existing.anomaly_features = anomaly_features
+                db.commit()
         return False
     except Exception:
         db.rollback()
         raise
+
+
+def _sample_timestamp_shift(path: str) -> timedelta:
+    """Move bundled demo events so their relative ordering is recent at replay."""
+    latest: datetime | None = None
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                raw = parse_eve_line(line)
+                event = normalize_event(raw) if raw is not None else None
+                if event is not None and (latest is None or event.timestamp > latest):
+                    latest = event.timestamp
+    except OSError:
+        return timedelta(0)
+    if latest is None:
+        return timedelta(0)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    return now - latest
+
+
+def _rebase_sample_timestamps(event: ParsedEvent, shift: timedelta) -> None:
+    """Keep raw demo timestamps consistent with the rebased event timestamp."""
+    event.timestamp += shift
+    event.raw["timestamp"] = event.timestamp.strftime("%Y-%m-%dT%H:%M:%S.%f+0000")
+    flow = event.raw.get("flow")
+    if isinstance(flow, dict):
+        for key in ("start", "end"):
+            value = flow.get(key)
+            if isinstance(value, str):
+                parsed = _parse_iso_utc(value)
+                if parsed is not None:
+                    flow[key] = (parsed + shift).strftime("%Y-%m-%dT%H:%M:%S.%f+0000")
 
 
 def ingest_file(
@@ -90,9 +146,11 @@ def ingest_file(
     path: str,
     anomaly_scorer: AnomalyScorer | None = None,
     start_offset: int | None = None,
+    rebase_timestamps_to_now: bool = False,
 ) -> dict:
     """One-shot ingest a file (e.g. sample replay). Returns stats."""
     stats = {"read": 0, "parsed": 0, "normalized": 0, "inserted": 0, "duplicate": 0, "malformed": 0}
+    timestamp_shift = _sample_timestamp_shift(path) if rebase_timestamps_to_now else timedelta(0)
     try:
         fh = open(path, "r", encoding="utf-8", errors="replace")
     except (FileNotFoundError, PermissionError, OSError) as e:
@@ -115,13 +173,21 @@ def ingest_file(
             if norm is None:
                 continue
             stats["normalized"] += 1
+            if timestamp_shift:
+                _rebase_sample_timestamps(norm, timestamp_shift)
             a_score, a_feat = (None, None)
             if anomaly_scorer is not None:
                 try:
                     a_score, a_feat = anomaly_scorer(norm)
                 except Exception as e:
                     log.warn("anomaly_score_error", err=repr(e))
-            ok = _insert_event(db, norm, a_score, a_feat)
+            ok = _insert_event(
+                db,
+                norm,
+                a_score,
+                a_feat,
+                refresh_existing=rebase_timestamps_to_now,
+            )
             if ok:
                 stats["inserted"] += 1
             else:
@@ -192,6 +258,7 @@ class EveFileReader:
     def _read_from_offset(self, db: Session, path: str, offset: int, inode: int | None) -> None:
         inserted = duplicate = malformed = parsed = 0
         fh = None
+        checkpoint_offset = offset
         try:
             fh = open(path, "r", encoding="utf-8", errors="replace")
             if offset:
@@ -199,14 +266,27 @@ class EveFileReader:
                     fh.seek(offset)
                 except OSError:
                     offset = 0
-            for line in fh:
+                    checkpoint_offset = 0
+            while True:
+                line_start = fh.tell()
+                line = fh.readline()
+                if not line:
+                    break
+                # Keep an incomplete trailing record at its start offset so the
+                # next poll can retry it after the writer finishes the line.
+                if not line.endswith("\n"):
+                    checkpoint_offset = line_start
+                    break
+                line_end = fh.tell()
                 raw = parse_eve_line(line)
                 if raw is None:
                     malformed += 1
+                    checkpoint_offset = line_end
                     continue
                 parsed += 1
                 norm = normalize_event(raw)
                 if norm is None:
+                    checkpoint_offset = line_end
                     continue
                 a_score, a_feat = (None, None)
                 if self.anomaly_scorer is not None:
@@ -219,7 +299,7 @@ class EveFileReader:
                     inserted += 1
                 else:
                     duplicate += 1
-                offset = fh.tell()
+                checkpoint_offset = line_end
         except (FileNotFoundError, PermissionError):
             # Treat as transient — will retry next tick
             return
@@ -227,13 +307,9 @@ class EveFileReader:
             return
         finally:
             if fh is not None:
-                try:
-                    current_offset = fh.tell()
-                except Exception:
-                    current_offset = offset
                 fh.close()
                 try:
-                    _save_checkpoint(db, path, current_offset, inode)
+                    _save_checkpoint(db, path, checkpoint_offset, inode)
                 except Exception:
                     db.rollback()
         if inserted or duplicate or malformed:

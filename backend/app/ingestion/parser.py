@@ -64,9 +64,6 @@ class ParsedEvent:
     dedup_key: str
 
 
-EVENT_TYPES_OF_INTEREST = {"alert", "flow", "dns", "http", "tls"}
-
-
 def _get_ip(raw: dict, *keys) -> str | None:
     for k in keys:
         if k in raw and isinstance(raw[k], str) and raw[k].strip():
@@ -109,26 +106,10 @@ def _normalize_severity(raw_alert: dict | None) -> str | None:
     return "MEDIUM"
 
 
-def _make_dedup_key(
-    timestamp: datetime,
-    src_ip: str | None,
-    dst_ip: str | None,
-    src_port: int | None,
-    dst_port: int | None,
-    event_type: str,
-    signature: str | None,
-) -> str:
-    parts = [
-        timestamp.replace(microsecond=0).isoformat(),
-        src_ip or "",
-        dst_ip or "",
-        str(src_port or ""),
-        str(dst_port or ""),
-        event_type[:16],
-        (signature or "")[:64],
-    ]
-    joined = "|".join(parts)
-    return hashlib.sha1(joined.encode("utf-8", errors="replace")).hexdigest()
+def _make_dedup_key(raw: dict[str, Any]) -> str:
+    """Hash the complete normalized JSON record to avoid lossy-key collisions."""
+    canonical = json.dumps(raw, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def parse_eve_line(line: str) -> dict[str, Any] | None:
@@ -153,7 +134,6 @@ def normalize_event(raw: dict[str, Any]) -> ParsedEvent | None:
     event_type = (raw.get("event_type") or "").strip().lower()
     if not event_type:
         return None
-    # Only keep event types we understand; other types are accepted but limited
     timestamp = _parse_iso_utc(raw.get("timestamp"))
     if timestamp is None:
         timestamp = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -194,15 +174,7 @@ def normalize_event(raw: dict[str, Any]) -> ParsedEvent | None:
     if event_type == "alert" and severity is None:
         severity = _normalize_severity({"severity": raw.get("severity")}) or "MEDIUM"
 
-    dedup_key = _make_dedup_key(
-        timestamp=timestamp,
-        src_ip=src_ip,
-        dst_ip=dst_ip,
-        src_port=src_port,
-        dst_port=dst_port,
-        event_type=event_type,
-        signature=signature,
-    )
+    dedup_key = _make_dedup_key(raw)
 
     return ParsedEvent(
         raw=raw,
